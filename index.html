@@ -54,12 +54,13 @@
   <div class="card">
     <h2>밝기</h2>
     <div class="row"><label>낮 밝기</label><span class="val" id="brightV"></span></div>
-    <input type="range" id="bright" min="1" max="100" value="80">
+    <input type="range" id="bright" min="0" max="100" value="80">
     <div class="row"><label for="nightOn">야간 모드</label><input type="checkbox" id="nightOn" checked></div>
     <div class="row"><label>야간 시간</label>
       <span><select id="nS"></select> ~ <select id="nE"></select></span></div>
-    <div class="row"><label>야간 밝기 <small style="color:var(--sub)">(0 = 화면 끔)</small></label><span class="val" id="nBV"></span></div>
+    <div class="row"><label>야간 밝기</label><span class="val" id="nBV"></span></div>
     <input type="range" id="nB" min="0" max="100" value="5">
+    <div class="row"><label for="nightOff">야간에 화면 끄기 <small style="color:var(--sub)">(스위치를 누르면 10초 켜짐)</small></label><input type="checkbox" id="nightOff"></div>
   </div>
 
   <div class="card">
@@ -82,6 +83,7 @@
     <div class="row"><label>위도</label><input type="number" id="lat" step="0.0001" value="37.5665"></div>
     <div class="row"><label>경도</label><input type="number" id="lon" step="0.0001" value="126.9780"></div>
     <button id="btnGeo" style="width:100%">현재 위치로 설정</button>
+    <button id="btnWxPre" style="width:100%;margin-top:8px">날씨 미리 받아두기 <small>(인터넷 될 때)</small></button>
     <div class="msg" id="wxMsg"></div>
   </div>
 
@@ -115,7 +117,7 @@ for (const id of ['nS', 'nE']) {
 }
 $('nS').value = 23; $('nE').value = 7;
 
-const FIELDS = ['bright', 'nightOn', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
+const FIELDS = ['bright', 'nightOn', 'nightOff', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
 function loadLocal() {
   try {
     const s = JSON.parse(localStorage.getItem('clockCfg') || '{}');
@@ -129,7 +131,7 @@ function saveLocal() {
 }
 function refreshLabels() {
   $('brightV').textContent = $('bright').value + '%';
-  $('nBV').textContent = $('nB').value === '0' ? '꺼짐' : $('nB').value + '%';
+  $('nBV').textContent = $('nB').value + '%';
 }
 loadLocal(); refreshLabels();
 if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConn').disabled = true; $('btnSync').disabled = true; }
@@ -183,11 +185,11 @@ async function readStatus(fillUi) {
     valid: a[1] === '1', drift: +a[2], lastErr: +a[3], lastErrValid: a[4] === '1', count: +a[5],
     bright: a[6], nightOn: a[7] === '1', nS: a[8], nE: a[9], nB: a[10], home: a[11],
     autoWx: a[12] === '1', autoWxSec: a[13], flip: a[14] === '1', h12: a[15] === '1',
-    wxH: +a[16], wxD: +a[17], devMs: +a[18]
+    wxH: +a[16], wxD: +a[17], devMs: +a[18], nightOff: a[19] === '1'
   };
   if (fillUi) {
     for (const k of ['bright', 'nS', 'nE', 'nB', 'home', 'autoWxSec']) $(k).value = st[k];
-    for (const k of ['nightOn', 'autoWx', 'flip', 'h12']) $(k).checked = st[k];
+    for (const k of ['nightOn', 'nightOff', 'autoWx', 'flip', 'h12']) $(k).checked = st[k];
     refreshLabels(); saveLocal();
   }
   $('iTime').textContent = st.valid ? new Date(st.devMs).toLocaleString('ko-KR') : '동기화 필요';
@@ -204,23 +206,48 @@ async function readStatus(fillUi) {
 const b = id => $(id).checked ? 1 : 0;
 function settingsMsg() {
   return ['S', $('bright').value, b('nightOn'), $('nS').value, $('nE').value, $('nB').value,
-          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12')].join(',');
+          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12'), b('nightOff')].join(',');
 }
 function timeMsg() { return 'T,' + Date.now() + ',' + (-new Date().getTimezoneOffset()); }
 
-async function fetchWeather() {
+// 날씨: 인터넷이 될 때 받아서 폰에 저장(캐시)해 두고, 동기화 때 그걸 씀
+function wxUrl() {
   const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+  return 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
     '&hourly=temperature_2m,weather_code,precipitation_probability' +
     '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
     '&timezone=auto&forecast_days=5&timeformat=unixtime';
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('날씨 서버 응답 ' + r.status);
-  const j = await r.json();
+}
+async function downloadWeather() {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  try {
+    const r = await fetch(wxUrl(), { signal: ctrl.signal, cache: 'no-store' });
+    if (!r.ok) throw new Error('날씨 서버 응답 ' + r.status);
+    const j = await r.json();
+    try { localStorage.setItem('wxCache', JSON.stringify({ t: Date.now(), j })); } catch (e) {}
+    return j;
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? '응답 시간 초과' : '인터넷 연결 실패');
+  } finally { clearTimeout(timer); }
+}
+function cachedWeather() {
+  try {
+    const c = JSON.parse(localStorage.getItem('wxCache') || 'null');
+    if (c && Date.now() - c.t < 72 * 3600e3) return c;
+  } catch (e) {}
+  return null;
+}
+function ageText(ms) {
+  const m = Math.round(ms / 60000);
+  return m < 60 ? m + '분 전' : Math.round(m / 60) + '시간 전';
+}
+function buildWeather(j) {
   const T = v => Math.max(-60, Math.min(60, Math.round(v ?? 0)));
   const now = Date.now() / 1000;
   const ht = j.hourly.time;
-  let s = ht.findIndex(t => t + 3600 > now); if (s < 0) s = 0;
+  let s = ht.findIndex(t => t + 3600 > now);
+  if (s < 0) throw new Error('저장된 날씨가 너무 오래됨');
   const n = Math.min(72, ht.length - s);
   const hs = [];
   for (let i = 0; i < n; i++) {
@@ -232,12 +259,30 @@ async function fetchWeather() {
   for (let i = 0; i < dn; i++) {
     ds.push(T(d.temperature_2m_max[i]) + ':' + T(d.temperature_2m_min[i]) + ':' + (d.weather_code[i] ?? 3) + ':' + (d.precipitation_probability_max[i] ?? 0));
   }
+  const today = d.time.findIndex(t => t + 86400 > now);
+  const ti = today < 0 ? 0 : today;
   return {
     W: 'W,' + ht[s] + ',' + n + ',' + hs.join(';'),
     D: 'D,' + d.time[0] + ',' + dn + ',' + ds.join(';'),
-    now: T(j.hourly.temperature_2m[s]), max: T(d.temperature_2m_max[0]), min: T(d.temperature_2m_min[0])
+    now: T(j.hourly.temperature_2m[s]), max: T(d.temperature_2m_max[ti]), min: T(d.temperature_2m_min[ti])
   };
 }
+// 새로 받아보고, 안 되면 저장해 둔 날씨 사용
+async function getWeather() {
+  try {
+    const j = await downloadWeather();
+    return { wx: buildWeather(j), note: '방금 받음' };
+  } catch (e) {
+    const c = cachedWeather();
+    if (c) return { wx: buildWeather(c.j), note: '저장된 날씨 사용 (' + ageText(Date.now() - c.t) + ' 받음)' };
+    throw e;
+  }
+}
+function showCacheInfo() {
+  const c = cachedWeather();
+  $('wxMsg').textContent = c ? '저장된 날씨: ' + ageText(Date.now() - c.t) + ' 받음' : '저장된 날씨 없음';
+}
+showCacheInfo();
 
 // ---------- 버튼 동작 ----------
 $('btnConn').onclick = () => {
@@ -257,14 +302,14 @@ $('btnSync').onclick = () => {
     lines.push('✓ 설정');
     try {
       $('syncMsg').textContent = '날씨 받아오는 중...';
-      const wx = await fetchWeather();
+      const { wx, note } = await getWeather();
       $('syncMsg').textContent = '날씨 보내는 중...';
       await writeMsg(wx.W);
       await writeMsg(wx.D);
-      lines.push(`✓ 날씨 (지금 ${wx.now}°, 오늘 ${wx.min}°~${wx.max}°)`);
-      $('wxMsg').textContent = '마지막 날씨 동기화: ' + new Date().toLocaleString('ko-KR');
+      lines.push(`✓ 날씨 (지금 ${wx.now}°, 오늘 ${wx.min}°~${wx.max}°) - ${note}`);
+      showCacheInfo();
     } catch (e) {
-      lines.push('✗ 날씨 실패: ' + e.message + ' (모바일 데이터 확인)');
+      lines.push('✗ 날씨 실패: ' + e.message + '\n  → 인터넷 되는 곳에서 "날씨 미리 받아두기"를 눌러두세요');
     }
     await writeMsg(timeMsg());          // 시간은 가장 마지막에 (지연 최소화)
     lines.push('✓ 시간');
@@ -303,12 +348,23 @@ for (const id of ['bright', 'nB']) {
     if (isConnected()) enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
   });
 }
-for (const id of ['nightOn', 'nS', 'nE', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon']) {
+for (const id of ['nightOn', 'nightOff', 'nS', 'nE', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon']) {
   $(id).addEventListener('change', () => {
     saveLocal();
     if (isConnected() && id !== 'lat' && id !== 'lon') enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
   });
 }
+
+$('btnWxPre').onclick = async () => {
+  $('wxMsg').textContent = '날씨 받는 중...';
+  saveLocal();
+  try {
+    const wx = buildWeather(await downloadWeather());
+    $('wxMsg').textContent = `✓ 저장 완료 (지금 ${wx.now}°, 오늘 ${wx.min}°~${wx.max}°)\n집에서 동기화하면 이 날씨가 시계로 가요`;
+  } catch (e) {
+    $('wxMsg').textContent = '✗ ' + e.message + ' — 와이파이/모바일 데이터를 확인하세요';
+  }
+};
 
 $('btnGeo').onclick = () => {
   if (!navigator.geolocation) { $('wxMsg').textContent = '위치 기능을 쓸 수 없어요'; return; }
