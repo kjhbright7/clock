@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#111418">
+<title>탁상시계 동기화</title>
+<style>
+  :root { --bg:#111418; --card:#1b2027; --line:#2a313a; --text:#e8ecf1; --sub:#8e99a6; --acc:#4fa3ff; --ok:#3ecf8e; --warn:#ffb547; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width:520px; margin:0 auto; padding:16px 14px 40px; }
+  h1 { font-size:22px; margin:6px 0 14px; }
+  h2 { font-size:15px; margin:0 0 12px; color:var(--sub); font-weight:600; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin:10px 0; }
+  .row label { flex:1; }
+  button { font:inherit; border:0; border-radius:10px; padding:10px 14px; background:#2b3440; color:var(--text); }
+  button.primary { background:var(--acc); color:#04111f; font-weight:700; width:100%; padding:16px; font-size:17px; }
+  button:disabled { opacity:.5; }
+  input[type=range] { width:100%; accent-color:var(--acc); }
+  input[type=number], select { font:inherit; background:#11161c; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px; }
+  input[type=number] { width:110px; }
+  input[type=checkbox] { width:22px; height:22px; accent-color:var(--acc); }
+  .status { display:flex; align-items:center; gap:8px; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#5a6470; }
+  .dot.on { background:var(--ok); }
+  .msg { margin-top:10px; font-size:14px; color:var(--sub); min-height:1.2em; white-space:pre-line; }
+  .val { color:var(--acc); font-weight:700; min-width:44px; text-align:right; }
+  .warn { background:#3a2a10; border-color:#6b4b14; color:var(--warn); }
+  .info div { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
+  .info div:last-child { border-bottom:0; }
+  .info span:first-child { color:var(--sub); }
+  #log { font-size:12px; color:#6c7784; white-space:pre-line; max-height:140px; overflow:auto; }
+</style>
+</head>
+<body>
+<main>
+  <h1>🕰️ 탁상시계</h1>
+
+  <div class="card warn" id="noBt" hidden>
+    이 브라우저는 블루투스 연결(Web Bluetooth)을 지원하지 않아요. 안드로이드 <b>크롬</b>으로 열어주세요.
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="status"><div class="dot" id="dot"></div><span id="connText">연결 안 됨</span></div>
+      <button id="btnConn">시계 연결</button>
+    </div>
+    <button class="primary" id="btnSync">전체 동기화<br><small style="font-weight:400">시간 + 날씨 + 설정</small></button>
+    <div class="msg" id="syncMsg"></div>
+  </div>
+
+  <div class="card">
+    <h2>밝기</h2>
+    <div class="row"><label>낮 밝기</label><span class="val" id="brightV"></span></div>
+    <input type="range" id="bright" min="1" max="100" value="80">
+    <div class="row"><label for="nightOn">야간 모드</label><input type="checkbox" id="nightOn" checked></div>
+    <div class="row"><label>야간 시간</label>
+      <span><select id="nS"></select> ~ <select id="nE"></select></span></div>
+    <div class="row"><label>야간 밝기 <small style="color:var(--sub)">(0 = 화면 끔)</small></label><span class="val" id="nBV"></span></div>
+    <input type="range" id="nB" min="0" max="100" value="5">
+  </div>
+
+  <div class="card">
+    <h2>화면</h2>
+    <div class="row"><label>기본 화면</label>
+      <select id="home"><option value="0">디지털</option><option value="1">아날로그</option></select></div>
+    <div class="row"><label for="autoWx">날씨 자동 표시</label><input type="checkbox" id="autoWx" checked></div>
+    <div class="row"><label>자동 표시 간격</label>
+      <select id="autoWxSec">
+        <option value="30">30초</option><option value="60" selected>1분</option>
+        <option value="120">2분</option><option value="300">5분</option><option value="600">10분</option>
+      </select></div>
+    <div class="row"><label for="h12">12시간제</label><input type="checkbox" id="h12"></div>
+    <div class="row"><label for="flip">화면 뒤집기 (180°)</label><input type="checkbox" id="flip"></div>
+    <button id="btnSave" style="width:100%">설정만 보내기</button>
+  </div>
+
+  <div class="card">
+    <h2>날씨 위치</h2>
+    <div class="row"><label>위도</label><input type="number" id="lat" step="0.0001" value="37.5665"></div>
+    <div class="row"><label>경도</label><input type="number" id="lon" step="0.0001" value="126.9780"></div>
+    <button id="btnGeo" style="width:100%">현재 위치로 설정</button>
+    <div class="msg" id="wxMsg"></div>
+  </div>
+
+  <div class="card info">
+    <h2>시계 상태</h2>
+    <div><span>시간</span><span id="iTime">-</span></div>
+    <div><span>오차 보정값</span><span id="iDrift">-</span></div>
+    <div><span>지난 동기화 때 오차</span><span id="iErr">-</span></div>
+    <div><span>보정 학습 횟수</span><span id="iCount">-</span></div>
+    <div><span>저장된 날씨</span><span id="iWx">-</span></div>
+  </div>
+
+  <div id="log"></div>
+</main>
+
+<script>
+const SVC = '6e1a0001-4b7d-4c2a-9f3e-2d1c0a5b7e01';
+const CMD = '6e1a0002-4b7d-4c2a-9f3e-2d1c0a5b7e01';
+const STA = '6e1a0003-4b7d-4c2a-9f3e-2d1c0a5b7e01';
+const $ = id => document.getElementById(id);
+
+let device = null, cmdChar = null, staChar = null;
+let chain = Promise.resolve();
+function enqueue(fn) { const p = chain.then(fn); chain = p.catch(() => {}); return p; }
+function log(m) { $('log').textContent = new Date().toLocaleTimeString() + '  ' + m + '\n' + $('log').textContent; }
+function isConnected() { return !!(device && device.gatt.connected && cmdChar); }
+
+// ---------- UI 준비 ----------
+for (const id of ['nS', 'nE']) {
+  for (let h = 0; h < 24; h++) $(id).add(new Option(String(h).padStart(2, '0') + '시', h));
+}
+$('nS').value = 23; $('nE').value = 7;
+
+const FIELDS = ['bright', 'nightOn', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
+function loadLocal() {
+  try {
+    const s = JSON.parse(localStorage.getItem('clockCfg') || '{}');
+    for (const k of FIELDS) if (k in s) { const el = $(k); el.type === 'checkbox' ? el.checked = s[k] : el.value = s[k]; }
+  } catch (e) {}
+}
+function saveLocal() {
+  const s = {};
+  for (const k of FIELDS) { const el = $(k); s[k] = el.type === 'checkbox' ? el.checked : el.value; }
+  try { localStorage.setItem('clockCfg', JSON.stringify(s)); } catch (e) {}
+}
+function refreshLabels() {
+  $('brightV').textContent = $('bright').value + '%';
+  $('nBV').textContent = $('nB').value === '0' ? '꺼짐' : $('nB').value + '%';
+}
+loadLocal(); refreshLabels();
+if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConn').disabled = true; $('btnSync').disabled = true; }
+
+function setConn(on, text) {
+  $('dot').classList.toggle('on', on);
+  $('connText').textContent = text || (on ? '연결됨' : '연결 안 됨');
+  $('btnConn').textContent = on ? '연결 끊기' : '시계 연결';
+}
+
+// ---------- BLE ----------
+async function gattConnect() {
+  setConn(false, '연결 중...');
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  cmdChar = await svc.getCharacteristic(CMD);
+  staChar = await svc.getCharacteristic(STA);
+  setConn(true);
+  log('연결됨: ' + device.name);
+}
+async function connect() {
+  device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'DeskClock' }], optionalServices: [SVC] });
+  device.addEventListener('gattserverdisconnected', () => { cmdChar = staChar = null; setConn(false); log('연결 끊김'); });
+  await gattConnect();
+  await readStatus(true);
+}
+async function ensureConnected() {
+  if (isConnected()) return;
+  if (device) { await gattConnect(); return; }
+  await connect();
+}
+
+async function writeMsg(str) {
+  const bytes = new TextEncoder().encode(str);
+  const CH = 19;
+  for (let i = 0; i < bytes.length; i += CH) {
+    const part = bytes.subarray(i, i + CH);
+    const pkt = new Uint8Array(part.length + 1);
+    pkt[0] = 0x80 | (i === 0 ? 1 : 0) | (i + CH >= bytes.length ? 2 : 0);
+    pkt.set(part, 1);
+    await cmdChar.writeValueWithResponse(pkt);
+  }
+}
+
+async function readStatus(fillUi) {
+  if (!staChar) return;
+  const v = await staChar.readValue();
+  const a = new TextDecoder().decode(v).split(',');
+  if (a.length < 19) return;
+  const st = {
+    valid: a[1] === '1', drift: +a[2], lastErr: +a[3], lastErrValid: a[4] === '1', count: +a[5],
+    bright: a[6], nightOn: a[7] === '1', nS: a[8], nE: a[9], nB: a[10], home: a[11],
+    autoWx: a[12] === '1', autoWxSec: a[13], flip: a[14] === '1', h12: a[15] === '1',
+    wxH: +a[16], wxD: +a[17], devMs: +a[18]
+  };
+  if (fillUi) {
+    for (const k of ['bright', 'nS', 'nE', 'nB', 'home', 'autoWxSec']) $(k).value = st[k];
+    for (const k of ['nightOn', 'autoWx', 'flip', 'h12']) $(k).checked = st[k];
+    refreshLabels(); saveLocal();
+  }
+  $('iTime').textContent = st.valid ? new Date(st.devMs).toLocaleString('ko-KR') : '동기화 필요';
+  $('iDrift').textContent = (st.drift * 0.0864 >= 0 ? '+' : '') + (st.drift * 0.0864).toFixed(2) + '초/일';
+  $('iErr').textContent = st.lastErrValid
+    ? (Math.abs(st.lastErr) < 50 ? '거의 없음' : (Math.abs(st.lastErr) / 1000).toFixed(2) + '초 ' + (st.lastErr > 0 ? '빨랐음' : '느렸음'))
+    : '-';
+  $('iCount').textContent = st.count + '회';
+  $('iWx').textContent = st.wxH ? `${st.wxH}시간 / ${st.wxD}일` : '없음';
+  return st;
+}
+
+// ---------- 메시지 ----------
+const b = id => $(id).checked ? 1 : 0;
+function settingsMsg() {
+  return ['S', $('bright').value, b('nightOn'), $('nS').value, $('nE').value, $('nB').value,
+          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12')].join(',');
+}
+function timeMsg() { return 'T,' + Date.now() + ',' + (-new Date().getTimezoneOffset()); }
+
+async function fetchWeather() {
+  const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value);
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + lat + '&longitude=' + lon +
+    '&hourly=temperature_2m,weather_code,precipitation_probability' +
+    '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max' +
+    '&timezone=auto&forecast_days=5&timeformat=unixtime';
+  const r = await fetch(url);
+  if (!r.ok) throw new Error('날씨 서버 응답 ' + r.status);
+  const j = await r.json();
+  const T = v => Math.max(-60, Math.min(60, Math.round(v ?? 0)));
+  const now = Date.now() / 1000;
+  const ht = j.hourly.time;
+  let s = ht.findIndex(t => t + 3600 > now); if (s < 0) s = 0;
+  const n = Math.min(72, ht.length - s);
+  const hs = [];
+  for (let i = 0; i < n; i++) {
+    const k = s + i;
+    hs.push(T(j.hourly.temperature_2m[k]) + ':' + (j.hourly.weather_code[k] ?? 3) + ':' + (j.hourly.precipitation_probability[k] ?? 0));
+  }
+  const d = j.daily, ds = [];
+  const dn = Math.min(7, d.time.length);
+  for (let i = 0; i < dn; i++) {
+    ds.push(T(d.temperature_2m_max[i]) + ':' + T(d.temperature_2m_min[i]) + ':' + (d.weather_code[i] ?? 3) + ':' + (d.precipitation_probability_max[i] ?? 0));
+  }
+  return {
+    W: 'W,' + ht[s] + ',' + n + ',' + hs.join(';'),
+    D: 'D,' + d.time[0] + ',' + dn + ',' + ds.join(';'),
+    now: T(j.hourly.temperature_2m[s]), max: T(d.temperature_2m_max[0]), min: T(d.temperature_2m_min[0])
+  };
+}
+
+// ---------- 버튼 동작 ----------
+$('btnConn').onclick = () => {
+  if (isConnected()) { device.gatt.disconnect(); return; }
+  enqueue(async () => { await connect(); }).catch(e => { setConn(false); log('연결 실패: ' + e.message); });
+};
+
+$('btnSync').onclick = () => {
+  $('btnSync').disabled = true;
+  $('syncMsg').textContent = '연결 중...';
+  saveLocal();
+  enqueue(async () => {
+    await ensureConnected();
+    const lines = [];
+    $('syncMsg').textContent = '설정 보내는 중...';
+    await writeMsg(settingsMsg());
+    lines.push('✓ 설정');
+    try {
+      $('syncMsg').textContent = '날씨 받아오는 중...';
+      const wx = await fetchWeather();
+      $('syncMsg').textContent = '날씨 보내는 중...';
+      await writeMsg(wx.W);
+      await writeMsg(wx.D);
+      lines.push(`✓ 날씨 (지금 ${wx.now}°, 오늘 ${wx.min}°~${wx.max}°)`);
+      $('wxMsg').textContent = '마지막 날씨 동기화: ' + new Date().toLocaleString('ko-KR');
+    } catch (e) {
+      lines.push('✗ 날씨 실패: ' + e.message + ' (모바일 데이터 확인)');
+    }
+    await writeMsg(timeMsg());          // 시간은 가장 마지막에 (지연 최소화)
+    lines.push('✓ 시간');
+    await new Promise(r => setTimeout(r, 300));
+    const st = await readStatus(false);
+    if (st && st.lastErrValid) lines.push('이번 오차: ' + $('iErr').textContent);
+    $('syncMsg').textContent = lines.join('\n');
+    log('동기화 완료');
+  }).catch(e => {
+    $('syncMsg').textContent = '실패: ' + e.message;
+    log('동기화 실패: ' + e.message);
+  }).finally(() => { $('btnSync').disabled = false; });
+};
+
+$('btnSave').onclick = () => {
+  saveLocal();
+  enqueue(async () => { await ensureConnected(); await writeMsg(settingsMsg()); await readStatus(false); log('설정 전송'); })
+    .catch(e => log('설정 전송 실패: ' + e.message));
+};
+
+// 밝기 슬라이더: 움직이는 동안 미리보기, 손을 떼면 저장
+let pending = null, sending = false;
+function preview(val) {
+  if (!isConnected()) return;
+  pending = val;
+  if (sending) return;
+  sending = true;
+  enqueue(async () => {
+    while (pending !== null) { const v = pending; pending = null; await writeMsg('P,' + v); }
+  }).finally(() => { sending = false; });
+}
+for (const id of ['bright', 'nB']) {
+  $(id).addEventListener('input', () => { refreshLabels(); preview($(id).value); });
+  $(id).addEventListener('change', () => {
+    saveLocal();
+    if (isConnected()) enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
+  });
+}
+for (const id of ['nightOn', 'nS', 'nE', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon']) {
+  $(id).addEventListener('change', () => {
+    saveLocal();
+    if (isConnected() && id !== 'lat' && id !== 'lon') enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
+  });
+}
+
+$('btnGeo').onclick = () => {
+  if (!navigator.geolocation) { $('wxMsg').textContent = '위치 기능을 쓸 수 없어요'; return; }
+  $('wxMsg').textContent = '위치 확인 중...';
+  navigator.geolocation.getCurrentPosition(p => {
+    $('lat').value = p.coords.latitude.toFixed(4);
+    $('lon').value = p.coords.longitude.toFixed(4);
+    saveLocal();
+    $('wxMsg').textContent = '위치 저장됨';
+  }, e => { $('wxMsg').textContent = '위치 실패: ' + e.message; }, { timeout: 15000 });
+};
+</script>
+</body>
+</html>
