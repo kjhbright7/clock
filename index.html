@@ -31,6 +31,11 @@
   .info div { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-size:14px; }
   .info div:last-child { border-bottom:0; }
   .info span:first-child { color:var(--sub); }
+  .themes { display:grid; grid-template-columns:repeat(2,1fr); gap:8px; }
+  .th { background:#11161c; border:2px solid var(--line); border-radius:12px; padding:10px; text-align:left; }
+  .th b { display:block; font-size:15px; }
+  .th span { font-size:12px; color:var(--sub); }
+  .th.sel { border-color:var(--acc); background:#132233; }
   #log { font-size:12px; color:#6c7784; white-space:pre-line; max-height:140px; overflow:auto; }
 </style>
 </head>
@@ -64,9 +69,15 @@
   </div>
 
   <div class="card">
+    <h2>테마</h2>
+    <div class="themes" id="themes"></div>
+    <input type="hidden" id="theme" value="0">
+  </div>
+
+  <div class="card">
     <h2>화면</h2>
     <div class="row"><label>기본 화면</label>
-      <select id="home"><option value="0">디지털</option><option value="1">아날로그</option></select></div>
+      <select id="home"><option value="0">테마 시계</option><option value="1">아날로그</option></select></div>
     <div class="row"><label for="autoWx">날씨 자동 표시</label><input type="checkbox" id="autoWx" checked></div>
     <div class="row"><label>자동 표시 간격</label>
       <select id="autoWxSec">
@@ -117,7 +128,29 @@ for (const id of ['nS', 'nE']) {
 }
 $('nS').value = 23; $('nE').value = 7;
 
-const FIELDS = ['bright', 'nightOn', 'nightOff', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
+const THEMES = [
+  ['기본', '큰 숫자 + 날씨'],
+  ['🐱 고양이', '귀·수염, 6초마다 눈 깜빡'],
+  ['☀️ 날씨 친구', '날씨에 따라 표정이 바뀌는 캐릭터'],
+  ['🐰 토끼 달리기', '1분 동안 당근까지 깡총깡총'],
+  ['📟 레트로 LCD', '옛날 전자시계 숫자'],
+  ['🌙 별밤', '반짝이는 별과 별똥별'],
+];
+function drawThemeButtons() {
+  const box = $('themes'); box.innerHTML = '';
+  THEMES.forEach(([name, desc], i) => {
+    const b = document.createElement('button');
+    b.className = 'th' + (String(i) === $('theme').value ? ' sel' : '');
+    b.innerHTML = '<b>' + name + '</b><span>' + desc + '</span>';
+    b.onclick = () => {
+      $('theme').value = i; drawThemeButtons(); saveLocal();
+      if (isConnected()) enqueue(() => writeMsg(settingsMsg())).then(() => log('테마: ' + name)).catch(e => log(e.message));
+    };
+    box.appendChild(b);
+  });
+}
+
+const FIELDS = ['theme', 'bright', 'nightOn', 'nightOff', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
 function loadLocal() {
   try {
     const s = JSON.parse(localStorage.getItem('clockCfg') || '{}');
@@ -133,7 +166,7 @@ function refreshLabels() {
   $('brightV').textContent = $('bright').value + '%';
   $('nBV').textContent = $('nB').value + '%';
 }
-loadLocal(); refreshLabels();
+loadLocal(); refreshLabels(); drawThemeButtons();
 if (!navigator.bluetooth) { $('noBt').hidden = false; $('btnConn').disabled = true; $('btnSync').disabled = true; }
 
 function setConn(on, text) {
@@ -185,10 +218,11 @@ async function readStatus(fillUi) {
     valid: a[1] === '1', drift: +a[2], lastErr: +a[3], lastErrValid: a[4] === '1', count: +a[5],
     bright: a[6], nightOn: a[7] === '1', nS: a[8], nE: a[9], nB: a[10], home: a[11],
     autoWx: a[12] === '1', autoWxSec: a[13], flip: a[14] === '1', h12: a[15] === '1',
-    wxH: +a[16], wxD: +a[17], devMs: +a[18], nightOff: a[19] === '1'
+    wxH: +a[16], wxD: +a[17], devMs: +a[18], nightOff: a[19] === '1', theme: a[20] ?? '0'
   };
   if (fillUi) {
-    for (const k of ['bright', 'nS', 'nE', 'nB', 'home', 'autoWxSec']) $(k).value = st[k];
+    for (const k of ['bright', 'nS', 'nE', 'nB', 'home', 'autoWxSec', 'theme']) $(k).value = st[k];
+    drawThemeButtons();
     for (const k of ['nightOn', 'nightOff', 'autoWx', 'flip', 'h12']) $(k).checked = st[k];
     refreshLabels(); saveLocal();
   }
@@ -206,7 +240,7 @@ async function readStatus(fillUi) {
 const b = id => $(id).checked ? 1 : 0;
 function settingsMsg() {
   return ['S', $('bright').value, b('nightOn'), $('nS').value, $('nE').value, $('nB').value,
-          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12'), b('nightOff')].join(',');
+          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12'), b('nightOff'), $('theme').value].join(',');
 }
 function timeMsg() { return 'T,' + Date.now() + ',' + (-new Date().getTimezoneOffset()); }
 
