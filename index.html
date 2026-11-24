@@ -72,6 +72,40 @@
     <h2>테마</h2>
     <div class="themes" id="themes"></div>
     <input type="hidden" id="theme" value="0">
+    <div class="row"><label for="shuffle">테마 셔플 <small style="color:var(--sub)">(매시간 바뀜)</small></label><input type="checkbox" id="shuffle"></div>
+    <div class="row"><label for="invert">화이트 모드 <small style="color:var(--sub)">(흑백 반전)</small></label><input type="checkbox" id="invert"></div>
+  </div>
+
+  <div class="card">
+    <h2>꾸미기</h2>
+    <div class="row"><label>내 메시지</label></div>
+    <div style="display:flex;gap:8px">
+      <input type="text" id="msg" maxlength="20" placeholder="예: 오늘도 화이팅!" style="flex:1;font:inherit;background:#11161c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px">
+      <button id="btnMsg">보내기</button>
+    </div>
+    <div class="msg" style="margin-top:4px">'내 스티커' 테마 아래쪽에 나와요. 길면 옆으로 흘러가요.</div>
+
+    <div class="row" style="margin-top:16px"><label>D-day</label></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <input type="text" id="ddTitle" maxlength="10" placeholder="이름 (예: 방학)" style="flex:1;min-width:110px;font:inherit;background:#11161c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px">
+      <input type="date" id="ddDate" style="font:inherit;background:#11161c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px">
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px"><button id="btnDd" style="flex:1">D-day 보내기</button><button id="btnDdClear">지우기</button></div>
+
+    <div class="row" style="margin-top:16px"><label>픽셀 스티커 (32×32)</label><span class="val" id="stkTool">펜</span></div>
+    <canvas id="stk" width="320" height="320" style="width:100%;max-width:320px;aspect-ratio:1;display:block;margin:0 auto;border-radius:8px;touch-action:none;background:#000;image-rendering:pixelated"></canvas>
+    <div class="themes" style="grid-template-columns:repeat(4,1fr);margin-top:8px">
+      <button id="tPen">✏️ 펜</button><button id="tErase">🧽 지우개</button><button id="tInv">◐ 반전</button><button id="tClear">🗑 비우기</button>
+    </div>
+    <div class="row"><label>예시 그림</label></div>
+    <div class="themes" style="grid-template-columns:repeat(5,1fr)" id="presets"></div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <input type="text" id="emoji" maxlength="4" placeholder="이모지 🐻" style="width:110px;font:inherit;background:#11161c;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px">
+      <button id="btnEmoji" style="flex:1">이모지로 만들기</button>
+    </div>
+    <label style="display:block;margin-top:8px"><button id="btnPhoto" style="width:100%">📷 사진으로 만들기</button><input type="file" id="photo" accept="image/*" hidden></label>
+    <button class="primary" id="btnStk" style="margin-top:10px;padding:12px;font-size:15px">스티커 보내기</button>
+    <div class="msg" id="stkMsg">'내 스티커' 테마 왼쪽에 나와요.</div>
   </div>
 
   <div class="card">
@@ -105,6 +139,7 @@
     <div><span>지난 동기화 때 오차</span><span id="iErr">-</span></div>
     <div><span>보정 학습 횟수</span><span id="iCount">-</span></div>
     <div><span>저장된 날씨</span><span id="iWx">-</span></div>
+    <div><span>마지막 시작 원인</span><span id="iRst">-</span></div>
   </div>
 
   <div id="log"></div>
@@ -135,6 +170,10 @@ const THEMES = [
   ['🐰 토끼 달리기', '1분 동안 당근까지 깡총깡총'],
   ['📟 레트로 LCD', '옛날 전자시계 숫자'],
   ['🌙 별밤', '반짝이는 별과 별똥별'],
+  ['⠿ 도트', '점으로 찍은 미니멀 숫자'],
+  ['▭ 위젯', '카드 3장: 시간·날짜·날씨'],
+  ['🌱 픽셀 펫', '밥 먹고, 자고, 비 오면 우산'],
+  ['💖 내 스티커', '직접 그린 그림 + 메시지/D-day'],
 ];
 function drawThemeButtons() {
   const box = $('themes'); box.innerHTML = '';
@@ -150,7 +189,7 @@ function drawThemeButtons() {
   });
 }
 
-const FIELDS = ['theme', 'bright', 'nightOn', 'nightOff', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
+const FIELDS = ['theme', 'shuffle', 'invert', 'msg', 'ddTitle', 'ddDate', 'bright', 'nightOn', 'nightOff', 'nS', 'nE', 'nB', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon'];
 function loadLocal() {
   try {
     const s = JSON.parse(localStorage.getItem('clockCfg') || '{}');
@@ -218,12 +257,13 @@ async function readStatus(fillUi) {
     valid: a[1] === '1', drift: +a[2], lastErr: +a[3], lastErrValid: a[4] === '1', count: +a[5],
     bright: a[6], nightOn: a[7] === '1', nS: a[8], nE: a[9], nB: a[10], home: a[11],
     autoWx: a[12] === '1', autoWxSec: a[13], flip: a[14] === '1', h12: a[15] === '1',
-    wxH: +a[16], wxD: +a[17], devMs: +a[18], nightOff: a[19] === '1', theme: a[20] ?? '0'
+    wxH: +a[16], wxD: +a[17], devMs: +a[18], nightOff: a[19] === '1', theme: a[20] ?? '0', rst: +(a[21] ?? 0), rstCount: +(a[22] ?? 0),
+    invert: a[23] === '1', shuffle: a[24] === '1'
   };
   if (fillUi) {
     for (const k of ['bright', 'nS', 'nE', 'nB', 'home', 'autoWxSec', 'theme']) $(k).value = st[k];
     drawThemeButtons();
-    for (const k of ['nightOn', 'nightOff', 'autoWx', 'flip', 'h12']) $(k).checked = st[k];
+    for (const k of ['nightOn', 'nightOff', 'autoWx', 'flip', 'h12', 'invert', 'shuffle']) $(k).checked = st[k];
     refreshLabels(); saveLocal();
   }
   $('iTime').textContent = st.valid ? new Date(st.devMs).toLocaleString('ko-KR') : '동기화 필요';
@@ -233,6 +273,8 @@ async function readStatus(fillUi) {
     : '-';
   $('iCount').textContent = st.count + '회';
   $('iWx').textContent = st.wxH ? `${st.wxH}시간 / ${st.wxD}일` : '없음';
+  const RST = { 1: '전원 켜짐(정상)', 2: '외부 리셋', 3: '소프트웨어', 4: '프로그램 오류', 5: '워치독', 6: '워치독', 7: '워치독', 9: '전압 부족(브라운아웃)' };
+  $('iRst').textContent = (RST[st.rst] || ('기타 ' + st.rst)) + (st.rstCount ? ` · 재부팅 ${st.rstCount}회` : '');
   return st;
 }
 
@@ -240,7 +282,7 @@ async function readStatus(fillUi) {
 const b = id => $(id).checked ? 1 : 0;
 function settingsMsg() {
   return ['S', $('bright').value, b('nightOn'), $('nS').value, $('nE').value, $('nB').value,
-          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12'), b('nightOff'), $('theme').value].join(',');
+          $('home').value, b('autoWx'), $('autoWxSec').value, b('flip'), b('h12'), b('nightOff'), $('theme').value, b('invert'), b('shuffle')].join(',');
 }
 function timeMsg() { return 'T,' + Date.now() + ',' + (-new Date().getTimezoneOffset()); }
 
@@ -382,7 +424,7 @@ for (const id of ['bright', 'nB']) {
     if (isConnected()) enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
   });
 }
-for (const id of ['nightOn', 'nightOff', 'nS', 'nE', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon']) {
+for (const id of ['shuffle', 'invert', 'nightOn', 'nightOff', 'nS', 'nE', 'home', 'autoWx', 'autoWxSec', 'h12', 'flip', 'lat', 'lon']) {
   $(id).addEventListener('change', () => {
     saveLocal();
     if (isConnected() && id !== 'lat' && id !== 'lon') enqueue(() => writeMsg(settingsMsg())).catch(e => log(e.message));
@@ -410,6 +452,125 @@ $('btnGeo').onclick = () => {
     $('wxMsg').textContent = '위치 저장됨';
   }, e => { $('wxMsg').textContent = '위치 실패: ' + e.message; }, { timeout: 15000 });
 };
+
+// =================== 꾸미기 ===================
+function sendWhenReady(msg, label) {
+  saveLocal();
+  enqueue(async () => { await ensureConnected(); await writeMsg(msg); log(label); })
+    .catch(e => log(label + ' 실패: ' + e.message));
+}
+$('btnMsg').onclick = () => sendWhenReady('M,' + $('msg').value.trim(), '메시지 전송');
+$('btnDd').onclick = () => {
+  const d = $('ddDate').value;
+  if (!d) { alert('날짜를 골라주세요'); return; }
+  sendWhenReady('Y,' + d.replaceAll('-', '') + ',' + $('ddTitle').value.trim(), 'D-day 전송');
+};
+$('btnDdClear').onclick = () => { $('ddDate').value = ''; $('ddTitle').value = ''; sendWhenReady('Y,0,', 'D-day 지움'); };
+
+// ----- 32x32 픽셀 편집기 -----
+const N = 32;
+let px = new Uint8Array(N * N);
+let tool = 1;  // 1 펜, 0 지우개
+const cv = $('stk'), cx = cv.getContext('2d');
+function drawGrid() {
+  const c = cv.width / N;
+  cx.fillStyle = '#000'; cx.fillRect(0, 0, cv.width, cv.height);
+  for (let i = 0; i < N * N; i++) if (px[i]) {
+    cx.fillStyle = '#cfe6ff'; cx.fillRect((i % N) * c, Math.floor(i / N) * c, c, c);
+  }
+  cx.strokeStyle = 'rgba(255,255,255,.08)'; cx.lineWidth = 1;
+  for (let k = 0; k <= N; k++) {
+    cx.beginPath(); cx.moveTo(k * c + .5, 0); cx.lineTo(k * c + .5, cv.height); cx.stroke();
+    cx.beginPath(); cx.moveTo(0, k * c + .5); cx.lineTo(cv.width, k * c + .5); cx.stroke();
+  }
+}
+function saveStk() { try { localStorage.setItem('stkPx', Array.from(px).join('')); } catch (e) {} }
+function loadStk() {
+  try { const s = localStorage.getItem('stkPx'); if (s && s.length === N * N) px = Uint8Array.from(s, ch => +ch); } catch (e) {}
+}
+let painting = false;
+function paintAt(e) {
+  const r = cv.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / r.width * N), y = Math.floor((e.clientY - r.top) / r.height * N);
+  if (x < 0 || y < 0 || x >= N || y >= N) return;
+  px[y * N + x] = tool; drawGrid();
+}
+cv.addEventListener('pointerdown', e => { painting = true; cv.setPointerCapture(e.pointerId); paintAt(e); });
+cv.addEventListener('pointermove', e => { if (painting) paintAt(e); });
+cv.addEventListener('pointerup', () => { painting = false; saveStk(); });
+$('tPen').onclick = () => { tool = 1; $('stkTool').textContent = '펜'; };
+$('tErase').onclick = () => { tool = 0; $('stkTool').textContent = '지우개'; };
+$('tInv').onclick = () => { px = px.map(v => v ? 0 : 1); drawGrid(); saveStk(); };
+$('tClear').onclick = () => { px.fill(0); drawGrid(); saveStk(); };
+
+// 32x32 캔버스에 그린 결과를 픽셀로 (밝은 곳 = 켜짐, 디더링)
+function canvasToPx(draw, dither) {
+  const c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#000'; g.fillRect(0, 0, N, N);
+  draw(g);
+  const d = g.getImageData(0, 0, N, N).data;
+  const lum = new Float32Array(N * N);
+  for (let i = 0; i < N * N; i++) lum[i] = (d[i * 4] * .3 + d[i * 4 + 1] * .59 + d[i * 4 + 2] * .11) / 255;
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const i = y * N + x, v = lum[i], on = v > .5 ? 1 : 0;
+    px[i] = on;
+    if (dither) {
+      const err = v - on;
+      if (x + 1 < N) lum[i + 1] += err * 7 / 16;
+      if (y + 1 < N) {
+        if (x > 0) lum[i + N - 1] += err * 3 / 16;
+        lum[i + N] += err * 5 / 16;
+        if (x + 1 < N) lum[i + N + 1] += err / 16;
+      }
+    }
+  }
+  drawGrid(); saveStk();
+}
+
+// 예시 그림 (직접 도형으로 그림)
+const PRESETS = {
+  '💖 하트': g => { g.fillStyle = '#fff'; g.beginPath(); g.moveTo(16, 28); g.bezierCurveTo(-6, 14, 6, -2, 16, 9); g.bezierCurveTo(26, -2, 38, 14, 16, 28); g.fill(); },
+  '⭐ 별': g => { g.fillStyle = '#fff'; g.beginPath(); for (let k = 0; k < 10; k++) { const r = k % 2 ? 6 : 15, a = -Math.PI / 2 + k * Math.PI / 5; g.lineTo(16 + r * Math.cos(a), 17 + r * Math.sin(a)); } g.fill(); },
+  '🐱 고양이': g => { g.fillStyle = '#fff'; g.beginPath(); g.arc(16, 18, 11, 0, 7); g.fill();
+    g.beginPath(); g.moveTo(5, 14); g.lineTo(7, 2); g.lineTo(14, 9); g.fill(); g.beginPath(); g.moveTo(27, 14); g.lineTo(25, 2); g.lineTo(18, 9); g.fill();
+    g.fillStyle = '#000'; g.fillRect(10, 15, 3, 4); g.fillRect(19, 15, 3, 4); g.fillRect(15, 21, 2, 1); g.fillRect(14, 23, 1, 1); g.fillRect(17, 23, 1, 1); },
+  '🐻 곰': g => { g.fillStyle = '#fff'; g.beginPath(); g.arc(7, 8, 5, 0, 7); g.arc(25, 8, 5, 0, 7); g.fill(); g.beginPath(); g.arc(16, 18, 12, 0, 7); g.fill();
+    g.fillStyle = '#000'; g.fillRect(10, 15, 3, 3); g.fillRect(19, 15, 3, 3); g.beginPath(); g.ellipse(16, 22, 4, 3, 0, 0, 7); g.fill();
+    g.fillStyle = '#fff'; g.fillRect(15, 21, 2, 1); },
+  '🌷 꽃': g => { g.fillStyle = '#fff'; for (let k = 0; k < 5; k++) { const a = k * Math.PI * 2 / 5; g.beginPath(); g.arc(16 + 7 * Math.cos(a), 12 + 7 * Math.sin(a), 5, 0, 7); g.fill(); }
+    g.fillStyle = '#000'; g.beginPath(); g.arc(16, 12, 3, 0, 7); g.fill(); g.fillStyle = '#fff'; g.fillRect(15, 20, 2, 11); g.beginPath(); g.ellipse(21, 26, 4, 2, -.5, 0, 7); g.fill(); },
+};
+for (const [name, fn] of Object.entries(PRESETS)) {
+  const bt = document.createElement('button'); bt.textContent = name.split(' ')[0]; bt.title = name;
+  bt.onclick = () => canvasToPx(fn, false);
+  $('presets').appendChild(bt);
+}
+$('btnEmoji').onclick = () => {
+  const em = $('emoji').value.trim(); if (!em) return;
+  canvasToPx(g => { g.font = '28px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(em, 16, 18); }, true);
+};
+$('btnPhoto').onclick = () => $('photo').click();
+$('photo').onchange = () => {
+  const f = $('photo').files[0]; if (!f) return;
+  const img = new Image();
+  img.onload = () => canvasToPx(g => {
+    const s = Math.min(img.width, img.height);
+    g.drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, N, N);
+  }, true);
+  img.src = URL.createObjectURL(f);
+};
+$('btnStk').onclick = () => {
+  let hex = '';
+  for (let i = 0; i < N * N; i += 8) {
+    let b = 0; for (let k = 0; k < 8; k++) b = (b << 1) | px[i + k];
+    hex += b.toString(16).padStart(2, '0');
+  }
+  const empty = !px.some(v => v);
+  sendWhenReady(empty ? 'X,0' : 'X,' + hex, empty ? '스티커 지움' : '스티커 전송');
+  $('stkMsg').textContent = empty ? '빈 스티커라서 기본 하트로 돌아가요.' : '보냈어요! \'내 스티커\' 테마에서 보여요.';
+};
+loadStk(); drawGrid();
 </script>
 </body>
 </html>
